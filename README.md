@@ -30,8 +30,6 @@ Double-click it. A console window opens and your browser should launch automatic
 
 ## Why you can trust this
 
-I get it, some random exe from a friend is exactly the kind of thing you shouldn't just run blindly — so here's why this one's fine:
-
 - **It's one plain Python file.** `app.py` is the whole program, nothing else. No compiled mystery blob, nothing hidden — anyone can open it and read exactly what it does line by line.
 - **It only talks to two places, period:** [AniList](https://anilist.co) to pull anime titles/covers/dates, and MyAnimeList — and only that one, only when *you* hit export and upload the file yourself. No hidden server, no analytics, no phoning home.
 - **Your tags never leave your computer.** They're saved in `mal_picker_progress.json` right next to the program. Open it in Notepad if you want, it's just plain readable text.
