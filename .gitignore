@@ -1,0 +1,6 @@
+build/
+dist/
+*.spec
+__pycache__/
+mal_picker_progress.json
+mal_picker_progress.json.tmp
