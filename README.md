@@ -1,5 +1,3 @@
-<img width="1255" height="853" alt="image" src="https://github.com/user-attachments/assets/a336d98b-f301-4a64-9d0f-84d734efdca4" /># MAL Picker Helper
-
 Adding anime to MyAnimeList one at a time — click, wait for the popup, set the status, search for the next one — is painfully slow if you've got a backlog of hundreds of shows. This tool fixes that: browse anime visually by season or search, tag a status with one click (or a keyboard shortcut), and export a file MAL will import in one shot.
 
 Available in English and Latin American Spanish, switchable with one click in the app.
