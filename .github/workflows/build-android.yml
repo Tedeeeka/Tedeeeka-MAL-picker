@@ -17,6 +17,14 @@ jobs:
           distribution: "temurin"
           java-version: "17"
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install npm dependencies (Capacitor plugin sources live here — Gradle references them directly)
+        working-directory: android-app
+        run: npm ci
+
       - name: Install Android SDK components
         uses: android-actions/setup-android@v3
 
