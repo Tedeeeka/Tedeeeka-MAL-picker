@@ -1,4 +1,4 @@
-Adding anime to MyAnimeList one at a time — click, wait for the popup, set the status, search for the next one — is painfully slow if you've got a backlog of hundreds of shows. This tool fixes that: browse anime visually by season or search, tag a status with one click (or a keyboard shortcut), and export a file MAL will import in one shot.
+I had always wanted to keep track of the anime I had watched, but adding anime to MyAnimeList one at a time — click, wait for the popup, set the status, search for the next one — is painfully slow if you've got a backlog of hundreds of shows. This tool fixes that: browse anime visually by season or search, tag a status with one click (or a keyboard shortcut), and export a file MAL will import in one shot.
 
 Available in English and Latin American Spanish, switchable with one click in the app.
 
