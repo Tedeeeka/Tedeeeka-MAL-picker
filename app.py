@@ -67,7 +67,44 @@ query ($search: String, $page: Int) {
 """
 
 
-def anilist_query(query, variables):
+ERR_MSG = {
+    "anilist_http": {
+        "en": "AniList returned an error (HTTP {code}). Try again shortly.",
+        "es": "AniList devolvió un error (HTTP {code}). Intenta de nuevo en un momento.",
+    },
+    "anilist_unreachable": {
+        "en": "Could not reach AniList — check your internet connection. ({reason})",
+        "es": "No se pudo conectar con AniList — revisa tu conexión a internet. ({reason})",
+    },
+    "anilist_unexpected": {
+        "en": "Unexpected error talking to AniList: {e}",
+        "es": "Error inesperado al hablar con AniList: {e}",
+    },
+    "anilist_rejected": {
+        "en": "AniList rejected the request: {msg}",
+        "es": "AniList rechazó la solicitud: {msg}",
+    },
+    "progress_read_fail": {
+        "en": "Couldn't read the progress file at {path}. Please make sure that file exists, "
+              "isn't open in another program, and isn't corrupted. ({e})",
+        "es": "No se pudo leer el archivo de progreso en {path}. Asegúrate de que el archivo exista, "
+              "no esté abierto en otro programa, y no esté dañado. ({e})",
+    },
+    "progress_write_fail": {
+        "en": "Couldn't write to the progress file at {path}. Please make sure this program has "
+              "permission to write next to itself, and that the folder isn't read-only. ({e})",
+        "es": "No se pudo escribir en el archivo de progreso en {path}. Asegúrate de que este programa "
+              "tenga permiso para escribir junto a sí mismo, y que la carpeta no sea de solo lectura. ({e})",
+    },
+}
+
+
+def err(key, lang="en", **kwargs):
+    lang = lang if lang in ("en", "es") else "en"
+    return ERR_MSG[key][lang].format(**kwargs)
+
+
+def anilist_query(query, variables, lang="en"):
     """Runs a GraphQL query against AniList. Raises RuntimeError with a
     human-readable message on failure so the caller can surface it cleanly."""
     payload = json.dumps({"query": query, "variables": variables}).encode("utf-8")
@@ -88,16 +125,16 @@ def anilist_query(query, variables):
     except urllib.error.HTTPError as e:
         if e.code == 429:
             time.sleep(1.5)
-            return anilist_query(query, variables)
-        raise RuntimeError(f"AniList returned an error (HTTP {e.code}). Try again shortly.")
+            return anilist_query(query, variables, lang)
+        raise RuntimeError(err("anilist_http", lang, code=e.code))
     except urllib.error.URLError as e:
-        raise RuntimeError(f"Could not reach AniList — check your internet connection. ({e.reason})")
+        raise RuntimeError(err("anilist_unreachable", lang, reason=e.reason))
     except Exception as e:
-        raise RuntimeError(f"Unexpected error talking to AniList: {e}")
+        raise RuntimeError(err("anilist_unexpected", lang, e=e))
 
     if "errors" in body and body["errors"]:
         msg = body["errors"][0].get("message", "unknown error")
-        raise RuntimeError(f"AniList rejected the request: {msg}")
+        raise RuntimeError(err("anilist_rejected", lang, msg=msg))
     return body["data"]["Page"]
 
 
@@ -132,10 +169,10 @@ def simplify_media_list(page_data):
 _progress_lock = threading.Lock()
 
 
-def read_progress():
+def read_progress(lang="en"):
     with _progress_lock:
         if not os.path.exists(PROGRESS_PATH):
-            return {"selections": {}, "theme": "dark", "banner": "", "lastView": None}
+            return {"selections": {}, "theme": "dark", "banner": "", "lastView": None, "lang": "en"}
         try:
             with open(PROGRESS_PATH, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -143,16 +180,13 @@ def read_progress():
             data.setdefault("theme", "dark")
             data.setdefault("banner", "")
             data.setdefault("lastView", None)
+            data.setdefault("lang", "en")
             return data
         except (json.JSONDecodeError, OSError) as e:
-            raise RuntimeError(
-                f"Couldn't read the progress file at {PROGRESS_PATH}. "
-                f"Please make sure that file exists, isn't open in another program, "
-                f"and isn't corrupted. ({e})"
-            )
+            raise RuntimeError(err("progress_read_fail", lang, path=PROGRESS_PATH, e=e))
 
 
-def write_progress(data):
+def write_progress(data, lang="en"):
     with _progress_lock:
         try:
             tmp_path = PROGRESS_PATH + ".tmp"
@@ -160,11 +194,7 @@ def write_progress(data):
                 json.dump(data, f, ensure_ascii=False, indent=2)
             os.replace(tmp_path, PROGRESS_PATH)
         except OSError as e:
-            raise RuntimeError(
-                f"Couldn't write to the progress file at {PROGRESS_PATH}. "
-                f"Please make sure this program has permission to write next to itself, "
-                f"and that the folder isn't read-only. ({e})"
-            )
+            raise RuntimeError(err("progress_write_fail", lang, path=PROGRESS_PATH, e=e))
 
 
 def find_duplicate_titles(selections):
@@ -224,8 +254,9 @@ class Handler(BaseHTTPRequestHandler):
             year = int(q.get("year", [0])[0])
             season = q.get("season", [""])[0].upper()
             page = int(q.get("page", [1])[0])
+            lang = q.get("lang", ["en"])[0]
             try:
-                data = anilist_query(SEASON_QUERY, {"season": season, "seasonYear": year, "page": page})
+                data = anilist_query(SEASON_QUERY, {"season": season, "seasonYear": year, "page": page}, lang)
                 self._send_json({"ok": True, **simplify_media_list(data)})
             except RuntimeError as e:
                 self._send_json({"ok": False, "error": str(e)}, status=502)
@@ -235,16 +266,19 @@ class Handler(BaseHTTPRequestHandler):
             q = self._query_params()
             query_str = q.get("q", [""])[0]
             page = int(q.get("page", [1])[0])
+            lang = q.get("lang", ["en"])[0]
             try:
-                data = anilist_query(SEARCH_QUERY, {"search": query_str, "page": page})
+                data = anilist_query(SEARCH_QUERY, {"search": query_str, "page": page}, lang)
                 self._send_json({"ok": True, **simplify_media_list(data)})
             except RuntimeError as e:
                 self._send_json({"ok": False, "error": str(e)}, status=502)
             return
 
         if path == "/api/progress":
+            q = self._query_params()
+            lang = q.get("lang", ["en"])[0]
             try:
-                data = read_progress()
+                data = read_progress(lang)
                 self._send_json({"ok": True, **data})
             except RuntimeError as e:
                 self._send_json({"ok": False, "error": str(e)}, status=500)
@@ -264,8 +298,9 @@ class Handler(BaseHTTPRequestHandler):
             except json.JSONDecodeError:
                 self._send_json({"ok": False, "error": "Malformed data sent to the server."}, status=400)
                 return
+            lang = incoming.get("lang", "en")
             try:
-                write_progress(incoming)
+                write_progress(incoming, lang)
                 dupes = find_duplicate_titles(incoming.get("selections", {}))
                 self._send_json({"ok": True, "duplicateTitles": dupes})
             except RuntimeError as e:
@@ -376,81 +411,188 @@ FRONTEND_HTML = r"""<!DOCTYPE html>
 <div id="errBanner"></div>
 <header id="mainHeader">
   <div class="brand">
-    <div class="dot"></div><h1>Catalog // Import Builder</h1><span>tag → export → upload to myanimelist.net/import.php</span>
-    <div class="rightlinks"><button class="action iconbtn" id="themeBtn" title="Toggle theme">☾/☀</button></div>
+    <div class="dot"></div><h1>Catalog // Import Builder</h1><span data-i18n="subtitle">tag → export → upload to myanimelist.net/import.php</span>
+    <div class="rightlinks">
+      <button class="action iconbtn" id="langBtn" data-i18n-title="langToggleTitle" title="Change language">🌐 EN</button>
+      <button class="action iconbtn" id="themeBtn" data-i18n-title="themeToggleTitle" title="Toggle theme">☾/☀</button>
+    </div>
   </div>
   <div class="controls">
     <div class="tabs">
-      <button id="tabSeason" class="active">Browse by season</button>
-      <button id="tabSearch">Search by title</button>
+      <button id="tabSeason" class="active" data-i18n="tabSeason">Browse by season</button>
+      <button id="tabSearch" data-i18n="tabSearch">Search by title</button>
     </div>
     <div id="seasonControls">
-      <button class="action iconbtn" id="prevSeasonBtn" title="Previous season">◀</button>
+      <button class="action iconbtn" id="prevSeasonBtn" data-i18n-title="prevSeasonTitle" title="Previous season">◀</button>
       <select id="yearSel"></select>
       <select id="seasonSel">
-        <option value="WINTER">Winter</option>
-        <option value="SPRING">Spring</option>
-        <option value="SUMMER">Summer</option>
-        <option value="FALL">Fall</option>
+        <option value="WINTER" data-i18n="seasonWinter">Winter</option>
+        <option value="SPRING" data-i18n="seasonSpring">Spring</option>
+        <option value="SUMMER" data-i18n="seasonSummer">Summer</option>
+        <option value="FALL" data-i18n="seasonFall">Fall</option>
       </select>
-      <button class="action iconbtn" id="nextSeasonBtn" title="Next season">▶</button>
-      <button class="action primary" id="loadSeasonBtn">Load</button>
+      <button class="action iconbtn" id="nextSeasonBtn" data-i18n-title="nextSeasonTitle" title="Next season">▶</button>
+      <button class="action primary" id="loadSeasonBtn" data-i18n="load">Load</button>
     </div>
     <div id="searchControls" style="display:none;">
-      <input type="text" id="searchInput" placeholder="anime title..." style="width:240px;">
-      <button class="action primary" id="searchBtn">Search</button>
+      <input type="text" id="searchInput" data-i18n-placeholder="searchPlaceholder" placeholder="anime title..." style="width:240px;">
+      <button class="action primary" id="searchBtn" data-i18n="search">Search</button>
     </div>
-    <label class="chk"><input type="checkbox" id="hideTaggedChk"> hide tagged</label>
-    <button class="action" id="exportBackupBtn" style="margin-left:auto;">💾 Backup file</button>
-    <button class="action" id="importBackupBtn">📂 Import backup</button>
+    <label class="chk"><input type="checkbox" id="hideTaggedChk"> <span data-i18n="hideTagged">hide tagged</span></label>
+    <button class="action" id="exportBackupBtn" style="margin-left:auto;" data-i18n="backupFile">💾 Backup file</button>
+    <button class="action" id="importBackupBtn" data-i18n="importBackup">📂 Import backup</button>
     <input type="file" id="importBackupInput" accept="application/json" style="display:none;">
-    <button class="action" id="exportBtn">⤓ Export MAL XML</button>
-    <button class="action" id="clearBtn">Clear all tags</button>
+    <button class="action" id="exportBtn" data-i18n="exportXml">⤓ Export MAL XML</button>
+    <button class="action" id="clearBtn" data-i18n="clearAll">Clear all tags</button>
   </div>
   <div class="status-bar" id="statusBar"></div>
 </header>
 
 <details id="instructions">
-  <summary>▸ How this works / read before sharing with friends</summary>
+  <summary data-i18n="instructionsSummary">▸ How this works / read before sharing with friends</summary>
   <div class="body">
-    <h4>Basics</h4>
-    <p>Browse by season/year, or search a title. Click a status button on a card to tag it (or hover a card and press <b>1–6</b>). Hit <b>Export MAL XML</b> — this downloads a file. Go to <b>myanimelist.net/import.php</b>, choose import type "MyAnimeList Import", and upload it.</p>
-    <p>Scoring is optional — leave it at 0 if you don't care, or set 1–10 and it carries into the import.</p>
-    <p>Entries with no MAL match (rare — mostly obscure/regional titles AniList knows but MAL doesn't) are shown dimmed and can't be tagged, since there'd be nothing to export them as.</p>
+    <h4 data-i18n="basicsHeading">Basics</h4>
+    <p data-i18n="basicsP1">Browse by season/year, or search a title. Click a status button on a card to tag it (or hover a card and press <b>1–6</b>). Hit <b>Export MAL XML</b> — this downloads a file. Go to <b>myanimelist.net/import.php</b>, choose import type "MyAnimeList Import", and upload it.</p>
+    <p data-i18n="basicsP2">Scoring is optional — leave it at 0 if you don't care, or set 1–10 and it carries into the import.</p>
+    <p data-i18n="basicsP3">Entries with no MAL match (rare — mostly obscure/regional titles AniList knows but MAL doesn't) are shown dimmed and can't be tagged, since there'd be nothing to export them as.</p>
 
-    <h4 class="privacy">Privacy — read this</h4>
-    <p class="privacy">This is a program that runs entirely on your own computer. Your tagged statuses are saved to a plain file (<code>mal_picker_progress.json</code>) sitting right next to this program — nothing is sent to us, to each other, or anywhere else. The only network calls this makes are to AniList (to fetch anime info to show you) and, only when <i>you</i> choose to export and upload it, to MyAnimeList. You can open that JSON file in a text editor any time to see exactly what's stored — there's nothing hidden in it.</p>
+    <h4 class="privacy" data-i18n="privacyHeading">Privacy — read this</h4>
+    <p class="privacy" data-i18n="privacyP">This is a program that runs entirely on your own computer. Your tagged statuses are saved to a plain file (<code>mal_picker_progress.json</code>) sitting right next to this program — nothing is sent to us, to each other, or anywhere else. The only network calls this makes are to AniList (to fetch anime info to show you) and, only when <i>you</i> choose to export and upload it, to MyAnimeList. You can open that JSON file in a text editor any time to see exactly what's stored — there's nothing hidden in it.</p>
 
-    <h4>Customize the top banner</h4>
-    <p>Yes, you can put your waifu up there. Upload an image below. Recommended resolution: roughly <b>1600×220px</b> (wide, short) since it stretches across the header.</p>
+    <h4 data-i18n="bannerHeading">Customize the top banner</h4>
+    <p data-i18n="bannerP">Yes, you can put your waifu up there. Upload an image below. Recommended resolution: roughly <b>1600×220px</b> (wide, short) since it stretches across the header.</p>
     <div class="bannerform">
       <input type="file" id="bannerInput" accept="image/*">
-      <button class="action" id="removeBannerBtn">Remove banner</button>
+      <button class="action" id="removeBannerBtn" data-i18n="removeBanner">Remove banner</button>
     </div>
   </div>
 </details>
 
 <main>
-  <div id="content"><div class="empty">Pick a year + season, or search a title, to start tagging.</div></div>
+  <div id="content"><div class="empty" data-i18n="emptyStart">Pick a year + season, or search a title, to start tagging.</div></div>
   <div class="pager" id="pager" style="display:none;">
-    <button class="action" id="prevBtn">← Prev page</button>
+    <button class="action" id="prevBtn" data-i18n="prevPage">← Prev page</button>
     <span id="pageLabel" style="font-family:var(--mono); font-size:12px; color:var(--muted); align-self:center;"></span>
-    <button class="action" id="nextBtn">Next page →</button>
+    <button class="action" id="nextBtn" data-i18n="nextPage">Next page →</button>
   </div>
 </main>
-<footer>Data via AniList. Progress saved locally next to this program.</footer>
-<div id="toast"><span id="toastMsg"></span><button id="toastUndo">Undo</button></div>
+<footer data-i18n="footer">Data via AniList. Progress saved locally next to this program.</footer>
+<div id="toast"><span id="toastMsg"></span><button id="toastUndo" data-i18n="undo">Undo</button></div>
 
 <script>
+const STR = {
+  subtitle: {en:'tag → export → upload to myanimelist.net/import.php', es:'etiqueta → exporta → sube a myanimelist.net/import.php'},
+  langToggleTitle: {en:'Change language', es:'Cambiar idioma'},
+  themeToggleTitle: {en:'Toggle theme', es:'Cambiar tema'},
+  tabSeason: {en:'Browse by season', es:'Explorar por temporada'},
+  tabSearch: {en:'Search by title', es:'Buscar por título'},
+  prevSeasonTitle: {en:'Previous season', es:'Temporada anterior'},
+  nextSeasonTitle: {en:'Next season', es:'Siguiente temporada'},
+  seasonWinter: {en:'Winter', es:'Invierno'},
+  seasonSpring: {en:'Spring', es:'Primavera'},
+  seasonSummer: {en:'Summer', es:'Verano'},
+  seasonFall: {en:'Fall', es:'Otoño'},
+  load: {en:'Load', es:'Cargar'},
+  search: {en:'Search', es:'Buscar'},
+  searchPlaceholder: {en:'anime title...', es:'nombre del anime...'},
+  hideTagged: {en:'hide tagged', es:'ocultar ya etiquetados'},
+  backupFile: {en:'💾 Backup file', es:'💾 Respaldar archivo'},
+  importBackup: {en:'📂 Import backup', es:'📂 Importar respaldo'},
+  exportXml: {en:'⤓ Export MAL XML', es:'⤓ Exportar XML de MAL'},
+  clearAll: {en:'Clear all tags', es:'Borrar todas las etiquetas'},
+  instructionsSummary: {en:'▸ How this works / read before sharing with friends', es:'▸ Cómo funciona / lee esto antes de compartirlo con tus amigos'},
+  basicsHeading: {en:'Basics', es:'Lo básico'},
+  basicsP1: {en:'Browse by season/year, or search a title. Click a status button on a card to tag it (or hover a card and press <b>1–6</b>). Hit <b>Export MAL XML</b> — this downloads a file. Go to <b>myanimelist.net/import.php</b>, choose import type "MyAnimeList Import", and upload it.', es:'Explora por temporada/año, o busca un título. Haz clic en un botón de estado dentro de una tarjeta para etiquetarla (o pasa el mouse sobre la tarjeta y presiona <b>1–6</b>). Presiona <b>Exportar XML de MAL</b> — esto descarga un archivo. Entra a <b>myanimelist.net/import.php</b>, elige el tipo de importación "MyAnimeList Import" y súbelo.'},
+  basicsP2: {en:"Scoring is optional — leave it at 0 if you don't care, or set 1–10 and it carries into the import.", es:'Ponerle puntaje es opcional — déjalo en 0 si no te interesa, o pon un número del 1 al 10 y se incluye en la importación.'},
+  basicsP3: {en:"Entries with no MAL match (rare — mostly obscure/regional titles AniList knows but MAL doesn't) are shown dimmed and can't be tagged, since there'd be nothing to export them as.", es:'Los títulos sin equivalente en MAL (algo raro — casi siempre títulos muy poco conocidos o regionales que AniList sí tiene pero MAL no) aparecen apagados y no se pueden etiquetar, porque no habría nada que exportar.'},
+  privacyHeading: {en:'Privacy — read this', es:'Privacidad — lee esto'},
+  privacyP: {en:"This is a program that runs entirely on your own computer. Your tagged statuses are saved to a plain file (<code>mal_picker_progress.json</code>) sitting right next to this program — nothing is sent to us, to each other, or anywhere else. The only network calls this makes are to AniList (to fetch anime info to show you) and, only when <i>you</i> choose to export and upload it, to MyAnimeList. You can open that JSON file in a text editor any time to see exactly what's stored — there's nothing hidden in it.", es:'Este es un programa que corre completamente en tu propia computadora. Todo lo que etiquetas se guarda en un archivo de texto plano (<code>mal_picker_progress.json</code>) que está justo al lado del programa — nada se envía a nosotros, entre ustedes, ni a ningún otro lado. Las únicas conexiones a internet que hace son hacia AniList (para traer la información de los animes que ves) y, solo si <i>tú</i> decides exportar y subirlo, hacia MyAnimeList. Puedes abrir ese archivo JSON con cualquier editor de texto cuando quieras y ver exactamente qué se guardó — no hay nada escondido.'},
+  bannerHeading: {en:'Customize the top banner', es:'Personaliza el banner de arriba'},
+  bannerP: {en:'Yes, you can put your waifu up there. Upload an image below. Recommended resolution: roughly <b>1600×220px</b> (wide, short) since it stretches across the header.', es:'Sí, puedes poner a tu waifu ahí arriba. Sube una imagen abajo. Resolución recomendada: más o menos <b>1600×220px</b> (ancha y bajita), ya que se estira a lo largo de todo el encabezado.'},
+  removeBanner: {en:'Remove banner', es:'Quitar banner'},
+  emptyStart: {en:'Pick a year + season, or search a title, to start tagging.', es:'Elige un año y temporada, o busca un título, para empezar a etiquetar.'},
+  prevPage: {en:'← Prev page', es:'← Página anterior'},
+  nextPage: {en:'Next page →', es:'Página siguiente →'},
+  footer: {en:'Data via AniList. Progress saved locally next to this program.', es:'Datos vía AniList. El progreso se guarda localmente junto a este programa.'},
+  undo: {en:'Undo', es:'Deshacer'},
+  kbdHint: {en:'hover + press 1-6 to tag', es:'pasa el mouse y presiona 1-6 para etiquetar'},
+  nomalTag: {en:"not linked to MAL — can't export", es:'no está vinculado a MAL — no se puede exportar'},
+  scoreLabel: {en:'score:', es:'puntaje:'},
+  noResults: {en:'No results.', es:'No hay resultados.'},
+  loadingSeason: {en:'Loading {season} {year} — page {page}...', es:'Cargando {season} {year} — página {page}...'},
+  searchingFor: {en:'Searching "{q}" — page {page}...', es:'Buscando "{q}" — página {page}...'},
+  posterProgress: {en:'Loading posters: {loaded} / {total}', es:'Cargando pósters: {loaded} / {total}'},
+  serverUnreachable: {en:'Could not reach the local server. Is the app still running?', es:'No se pudo conectar con el servidor local. ¿Sigue corriendo la aplicación?'},
+  serverUnreachableSave: {en:'Could not reach the local server to save progress. Is the app still running?', es:'No se pudo conectar con el servidor local para guardar el progreso. ¿Sigue corriendo la aplicación?'},
+  serverUnreachableStart: {en:'Could not reach the local server. Make sure the app is still running, then reload this page.', es:'No se pudo conectar con el servidor local. Asegúrate de que la aplicación siga corriendo y recarga esta página.'},
+  confirmClear: {en:'Clear all tagged statuses? This cannot be undone.', es:'¿Borrar todas las etiquetas? Esto no se puede deshacer.'},
+  nothingTagged: {en:'Nothing tagged yet.', es:'Todavía no has etiquetado nada.'},
+  noAnimeTagged: {en:'No anime tagged yet — pick some statuses first.', es:'Todavía no etiquetaste ningún anime — elige algunos estados primero.'},
+  noTaggedInFile: {en:'That file has no tagged anime in it.', es:'Ese archivo no tiene ningún anime etiquetado.'},
+  couldNotReadFile: {en:'Could not read that file.', es:'No se pudo leer ese archivo.'},
+  progressLoaded: {en:'Progress loaded.', es:'Progreso cargado.'},
+  loadedMergeConfirm: {en:'Loaded {n} tagged anime.\n\nOK = merge into current progress\nCancel = replace current progress entirely', es:'Se cargaron {n} animes etiquetados.\n\nAceptar = combinar con tu progreso actual\nCancelar = reemplazar todo tu progreso actual'},
+  dupWarningExport: {en:'Heads up: these titles look tagged under more than one entry:\n{titles}\n\nExport anyway?', es:'Ojo: estos títulos parecen estar etiquetados en más de una entrada:\n{titles}\n\n¿Exportar de todas formas?'},
+  duplicateWarning: {en:'Possible duplicate titles tagged under different entries: {titles}', es:'Posibles títulos duplicados etiquetados en entradas distintas: {titles}'},
+  taggedAs: {en:'tagged as {status}', es:'etiquetado como {status}'},
+  cleared: {en:'cleared', es:'sin etiqueta'},
+  statusTotal: {en:'{n} tagged total', es:'{n} etiquetados en total'},
+  pageLabel: {en:'page {n}', es:'página {n}'},
+};
+
+const STATUS_LABELS = {
+  none: {en:'None', es:'Ninguno'},
+  watching: {en:'Watch', es:'Viendo'},
+  completed: {en:'Done', es:'Listo'},
+  onhold: {en:'Hold', es:'Pausa'},
+  dropped: {en:'Drop', es:'Dejado'},
+  ptw: {en:'Plan', es:'Plan'},
+};
+const MAL_STATUS_LABEL_FULL = {
+  watching: {en:'Watching', es:'Viendo'},
+  completed: {en:'Completed', es:'Completado'},
+  onhold: {en:'On-Hold', es:'En pausa'},
+  dropped: {en:'Dropped', es:'Abandonado'},
+  ptw: {en:'Plan to Watch', es:'Planeo ver'},
+};
+
+let currentLang = 'en';
+function t(key, vars){
+  let s = (STR[key] && (STR[key][currentLang] || STR[key].en)) || key;
+  if(vars) Object.keys(vars).forEach(k=> s = s.split('{'+k+'}').join(vars[k]));
+  return s;
+}
+function statusLabel(key){ return (STATUS_LABELS[key] && (STATUS_LABELS[key][currentLang] || STATUS_LABELS[key].en)) || key; }
+function malStatusFull(key){ return (MAL_STATUS_LABEL_FULL[key] && (MAL_STATUS_LABEL_FULL[key][currentLang] || MAL_STATUS_LABEL_FULL[key].en)) || key; }
+
+function applyI18n(){
+  document.querySelectorAll('[data-i18n]').forEach(el=>{
+    el.innerHTML = t(el.getAttribute('data-i18n'));
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el=>{
+    el.setAttribute('placeholder', t(el.getAttribute('data-i18n-placeholder')));
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el=>{
+    el.setAttribute('title', t(el.getAttribute('data-i18n-title')));
+  });
+  document.getElementById('langBtn').textContent = currentLang === 'es' ? '🌐 ES' : '🌐 EN';
+  renderStatusBar();
+  if(lastResults.length) renderResults(lastResults);
+}
+document.getElementById('langBtn').onclick = ()=>{
+  currentLang = currentLang === 'en' ? 'es' : 'en';
+  applyI18n();
+  saveProgress();
+};
+
 const STATUSES = [
-  {key:'none', label:'None', cls:'sel-none'},
-  {key:'watching', label:'Watch', cls:'sel-watching'},
-  {key:'completed', label:'Done', cls:'sel-completed'},
-  {key:'onhold', label:'Hold', cls:'sel-onhold'},
-  {key:'dropped', label:'Drop', cls:'sel-dropped'},
-  {key:'ptw', label:'Plan', cls:'sel-ptw'},
+  {key:'none', cls:'sel-none'},
+  {key:'watching', cls:'sel-watching'},
+  {key:'completed', cls:'sel-completed'},
+  {key:'onhold', cls:'sel-onhold'},
+  {key:'dropped', cls:'sel-dropped'},
+  {key:'ptw', cls:'sel-ptw'},
 ];
-const MAL_STATUS_TEXT = { watching:'Watching', completed:'Completed', onhold:'On-Hold', dropped:'Dropped', ptw:'Plan to Watch' };
 const SEASON_ORDER = ['WINTER','SPRING','SUMMER','FALL'];
 
 let selections = {};
@@ -485,17 +627,17 @@ function saveProgress(){
       const res = await fetch('/api/progress', {
         method:'POST',
         headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({selections, theme: document.body.classList.contains('light')?'light':'dark', banner: currentBanner, lastView: currentLastView()})
+        body: JSON.stringify({selections, theme: document.body.classList.contains('light')?'light':'dark', banner: currentBanner, lastView: currentLastView(), lang: currentLang})
       });
       const data = await res.json();
       if(!data.ok){ showErr(data.error); }
       else{
         clearErr();
         if(data.duplicateTitles && data.duplicateTitles.length){
-          showErr('Possible duplicate titles tagged under different entries: ' + data.duplicateTitles.join(', '));
+          showErr(t('duplicateWarning', {titles: data.duplicateTitles.join(', ')}));
         }
       }
-    }catch(e){ showErr('Could not reach the local server to save progress. Is the app still running?'); }
+    }catch(e){ showErr(t('serverUnreachableSave')); }
   }, 300);
 }
 function currentLastView(){
@@ -511,10 +653,11 @@ async function loadAllProgress(){
     selections = data.selections || {};
     if(data.theme === 'light') document.body.classList.add('light');
     if(data.banner){ currentBanner = data.banner; applyBanner(data.banner); }
-    renderStatusBar();
+    if(data.lang === 'es' || data.lang === 'en') currentLang = data.lang;
+    applyI18n();
     return data.lastView;
   }catch(e){
-    showErr('Could not reach the local server. Make sure the app is still running, then reload this page.');
+    showErr(t('serverUnreachableStart'));
     return null;
   }
 }
@@ -595,7 +738,7 @@ function cardHTML(anime){
   let segButtons = STATUSES.map(s => {
     const active = s.key === curStatus ? 'active' : '';
     const disabled = hasMal ? '' : 'disabled';
-    return `<button class="${s.cls} ${active}" data-id="${key}" data-status="${s.key}" ${disabled}>${s.label}</button>`;
+    return `<button class="${s.cls} ${active}" data-id="${key}" data-status="${s.key}" ${disabled}>${statusLabel(s.key)}</button>`;
   }).join('');
 
   return `<div class="card ${tagged?'tagged':''} ${hideTagged && tagged ? 'hidden-tagged':''} ${hasMal?'':'nomal'}" id="card-${key}" data-id="${key}" data-malid="${hasMal?id:''}">
@@ -605,18 +748,18 @@ function cardHTML(anime){
         <p class="title">${escapeHtml(anime.title)}</p>
         <div class="meta">${escapeHtml(anime.date)}</div>
         <div class="type">${escapeHtml(anime.format)}${anime.episodes ? ' · ' + anime.episodes + ' ep' : ''}</div>
-        ${hasMal ? '<div class="kbd">hover + press 1-6 to tag</div>' : '<div class="nomaltag">not linked to MAL — can\'t export</div>'}
+        ${hasMal ? '<div class="kbd">' + t('kbdHint') + '</div>' : '<div class="nomaltag">' + t('nomalTag') + '</div>'}
       </div>
     </div>
     <div class="seg-row">${segButtons}</div>
-    <div class="score-row">score: <input type="number" min="0" max="10" step="1" value="${curScore}" data-id="${key}" class="scoreInput" ${hasMal?'':'disabled'}></div>
+    <div class="score-row">${t('scoreLabel')} <input type="number" min="0" max="10" step="1" value="${curScore}" data-id="${key}" class="scoreInput" ${hasMal?'':'disabled'}></div>
   </div>`;
 }
 
 function renderResults(results){
   lastResults = results;
-  if(!results.length){ contentEl.innerHTML = '<div class="empty">No results.</div>'; return; }
-  contentEl.innerHTML = `<div class="posterProgress" id="posterProgress">Loading posters: 0 / ${results.length}</div><div class="grid">${results.map(cardHTML).join('')}</div>`;
+  if(!results.length){ contentEl.innerHTML = '<div class="empty">' + t('noResults') + '</div>'; return; }
+  contentEl.innerHTML = `<div class="posterProgress" id="posterProgress">${t('posterProgress',{loaded:0,total:results.length})}</div><div class="grid">${results.map(cardHTML).join('')}</div>`;
 
   let loadedCount = 0;
   const progressEl = document.getElementById('posterProgress');
@@ -626,7 +769,7 @@ function renderResults(results){
       img.classList.add('loaded');
       img.closest('.thumbwrap').classList.add('loaded');
       if(progressEl){
-        progressEl.textContent = `Loading posters: ${loadedCount} / ${results.length}`;
+        progressEl.textContent = t('posterProgress',{loaded:loadedCount,total:results.length});
         if(loadedCount >= results.length) setTimeout(()=>{ if(progressEl) progressEl.style.display='none'; }, 400);
       }
     };
@@ -666,7 +809,7 @@ function applyStatus(id, status, showToastMsg){
   renderStatusBar();
 
   if(showToastMsg){
-    const label = status === 'none' ? 'cleared' : ('tagged as ' + (MAL_STATUS_TEXT[status] || status));
+    const label = status === 'none' ? t('cleared') : t('taggedAs', {status: malStatusFull(status)});
     showToast(`"${anime.title}" ${label}`, ()=> applyStatus(id, prevSel ? prevSel.status : 'none', false));
   }
 }
@@ -712,45 +855,45 @@ function renderStatusBar(){
   const counts = {none:0, watching:0, completed:0, onhold:0, dropped:0, ptw:0};
   Object.values(selections).forEach(s => { counts[s.status] = (counts[s.status]||0) + 1; });
   const total = Object.keys(selections).length;
-  statusBarEl.innerHTML = `<span class="seg"><b>${total}</b> tagged total</span>` +
-    STATUSES.filter(s=>s.key!=='none').map(s=>`<span class="seg">${s.label}: <b>${counts[s.key]}</b></span>`).join('');
+  statusBarEl.innerHTML = `<span class="seg"><b>${t('statusTotal',{n:total})}</b></span>` +
+    STATUSES.filter(s=>s.key!=='none').map(s=>`<span class="seg">${statusLabel(s.key)}: <b>${counts[s.key]}</b></span>`).join('');
 }
 
 async function loadSeason(page){
   const year = yearSel.value;
   const season = document.getElementById('seasonSel').value;
-  contentEl.innerHTML = '<div class="loading">Loading ' + season + ' ' + year + ' — page ' + page + '...</div>';
+  contentEl.innerHTML = '<div class="loading">' + t('loadingSeason', {season: t('season'+season.charAt(0)+season.slice(1).toLowerCase()), year, page}) + '</div>';
   pagerEl.style.display = 'none';
   try{
-    const res = await fetch(`/api/season?year=${year}&season=${season}&page=${page}`);
+    const res = await fetch(`/api/season?year=${year}&season=${season}&page=${page}&lang=${currentLang}`);
     const data = await res.json();
     if(!data.ok){ contentEl.innerHTML = '<div class="empty">' + escapeHtml(data.error) + '</div>'; return; }
     hasNextPage = data.hasNextPage; currentPage = page;
     renderResults(data.items || []);
     updatePager();
     saveProgress();
-  }catch(e){ contentEl.innerHTML = '<div class="empty">Could not reach the local server. Is the app still running?</div>'; }
+  }catch(e){ contentEl.innerHTML = '<div class="empty">' + t('serverUnreachable') + '</div>'; }
 }
 
 async function doSearch(page){
   const q = document.getElementById('searchInput').value.trim();
   if(!q) return;
-  contentEl.innerHTML = '<div class="loading">Searching "' + escapeHtml(q) + '" — page ' + page + '...</div>';
+  contentEl.innerHTML = '<div class="loading">' + t('searchingFor', {q: escapeHtml(q), page}) + '</div>';
   pagerEl.style.display = 'none';
   try{
-    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&page=${page}`);
+    const res = await fetch(`/api/search?q=${encodeURIComponent(q)}&page=${page}&lang=${currentLang}`);
     const data = await res.json();
     if(!data.ok){ contentEl.innerHTML = '<div class="empty">' + escapeHtml(data.error) + '</div>'; return; }
     hasNextPage = data.hasNextPage; currentPage = page;
     renderResults(data.items || []);
     updatePager();
     saveProgress();
-  }catch(e){ contentEl.innerHTML = '<div class="empty">Could not reach the local server. Is the app still running?</div>'; }
+  }catch(e){ contentEl.innerHTML = '<div class="empty">' + t('serverUnreachable') + '</div>'; }
 }
 
 function updatePager(){
   pagerEl.style.display = 'flex';
-  pageLabelEl.textContent = 'page ' + currentPage;
+  pageLabelEl.textContent = t('pageLabel', {n: currentPage});
   document.getElementById('prevBtn').disabled = currentPage <= 1;
   document.getElementById('nextBtn').disabled = !hasNextPage;
 }
@@ -762,7 +905,7 @@ document.getElementById('prevBtn').onclick = ()=>{ if(currentPage<=1) return; cu
 document.getElementById('nextBtn').onclick = ()=>{ if(!hasNextPage) return; currentMode==='season' ? loadSeason(currentPage+1) : doSearch(currentPage+1); };
 
 document.getElementById('clearBtn').onclick = ()=>{
-  if(!confirm('Clear all tagged statuses? This cannot be undone.')) return;
+  if(!confirm(t('confirmClear'))) return;
   selections = {};
   saveProgress();
   renderStatusBar();
@@ -772,7 +915,7 @@ document.getElementById('clearBtn').onclick = ()=>{
 // backup export/import (on top of the automatic local file)
 document.getElementById('exportBackupBtn').onclick = ()=>{
   const total = Object.keys(selections).length;
-  if(!total){ alert('Nothing tagged yet.'); return; }
+  if(!total){ alert(t('nothingTagged')); return; }
   const payload = JSON.stringify({savedAt: new Date().toISOString(), selections}, null, 2);
   const blob = new Blob([payload], {type:'application/json'});
   const url = URL.createObjectURL(blob);
@@ -789,23 +932,27 @@ document.getElementById('importBackupInput').addEventListener('change', (e)=>{
       const parsed = JSON.parse(reader.result);
       const incoming = parsed.selections || parsed;
       const incomingCount = Object.keys(incoming).length;
-      if(!incomingCount){ alert('That file has no tagged anime in it.'); return; }
-      const merge = confirm(`Loaded ${incomingCount} tagged anime.\n\nOK = merge into current progress\nCancel = replace current progress entirely`);
+      if(!incomingCount){ alert(t('noTaggedInFile')); return; }
+      const merge = confirm(t('loadedMergeConfirm', {n:incomingCount}));
       selections = merge ? {...selections, ...incoming} : incoming;
       saveProgress();
       renderStatusBar();
       if(lastResults.length) renderResults(lastResults);
-      alert('Progress loaded.');
-    }catch(err){ alert('Could not read that file.'); }
+      alert(t('progressLoaded'));
+    }catch(err){ alert(t('couldNotReadFile')); }
   };
   reader.readAsText(file);
   e.target.value = '';
 });
 
+// These are the literal tokens MyAnimeList's importer expects — never translate these,
+// regardless of UI language, or the import will fail.
+const MAL_STATUS_XML = { watching:'Watching', completed:'Completed', onhold:'On-Hold', dropped:'Dropped', ptw:'Plan to Watch' };
+
 function buildXML(){
   const entries = Object.entries(selections);
   let body = entries.map(([id, s])=>{
-    const statusText = MAL_STATUS_TEXT[s.status];
+    const statusText = MAL_STATUS_XML[s.status];
     const watchedEps = s.status === 'completed' ? (s.episodes || 0) : 0;
     const score = s.score || 0;
     return `<anime>
@@ -829,9 +976,9 @@ function buildXML(){
 
 document.getElementById('exportBtn').onclick = ()=>{
   const total = Object.keys(selections).length;
-  if(!total){ alert('No anime tagged yet — pick some statuses first.'); return; }
+  if(!total){ alert(t('noAnimeTagged')); return; }
   const dupes = findDuplicatesClient();
-  if(dupes.length && !confirm(`Heads up: these titles look tagged under more than one entry:\n${dupes.join(', ')}\n\nExport anyway?`)) return;
+  if(dupes.length && !confirm(t('dupWarningExport', {titles: dupes.join(', ')}))) return;
   const xml = buildXML();
   const blob = new Blob([xml], {type:'application/xml'});
   const url = URL.createObjectURL(blob);
