@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Catalog / MAL Import Builder</title>
+<style>
+  :root{
+    --bg:#12151a; --panel:#1a1e25; --card:#1e232b; --line:#2b323d; --text:#e7e4dc;
+    --muted:#8b93a1; --amber:#ffb454; --amber-dim:#7a5a2e; --teal:#4fd1c5; --red:#e0645a;
+    --mono:'JetBrains Mono','SFMono-Regular',Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+  }
+  body.light{
+    --bg:#f2efe8; --panel:#ffffff; --card:#fbfaf6; --line:#ddd7c8; --text:#24211c;
+    --muted:#726c5e; --amber:#b3690f; --amber-dim:#f1dcb8; --teal:#0f7a70; --red:#b53a30;
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:var(--bg); color:var(--text); font-family:var(--sans); min-height:100vh; }
+  #errBanner{ display:none; background:#7a2e2e; color:#ffdcdc; font-family:var(--mono); font-size:12px; padding:8px 16px; text-align:center; }
+  header{ position:sticky; top:0; z-index:20; background:var(--panel); border-bottom:1px solid var(--line); padding:12px 16px; display:flex; align-items:center; gap:10px; }
+  .brand{ display:flex; align-items:baseline; gap:8px; min-width:0; }
+  .brand .dot{ width:9px; height:9px; border-radius:50%; background:var(--amber); box-shadow:0 0 8px var(--amber); flex-shrink:0;}
+  .brand h1{ font-family:var(--mono); font-size:14px; letter-spacing:1px; margin:0; color:var(--amber); text-transform:uppercase; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  #menuBtn{ background:var(--card); border:1px solid var(--line); color:var(--text); width:38px; height:38px; border-radius:8px; font-size:16px; cursor:pointer; flex-shrink:0; }
+  #menuBtn:hover{ border-color:var(--amber); color:var(--amber); }
+
+  .filterBar{ position:sticky; top:62px; z-index:15; background:var(--bg); border-bottom:1px solid var(--line); padding:10px 16px; display:flex; flex-wrap:wrap; gap:10px; align-items:center; }
+  .tabs{ display:flex; border:1px solid var(--line); border-radius:6px; overflow:hidden; }
+  .tabs button{ background:var(--card); color:var(--muted); border:none; padding:8px 14px; font-family:var(--mono); font-size:12px; cursor:pointer; letter-spacing:0.5px; }
+  .tabs button.active{ background:var(--amber-dim); color:var(--amber); }
+  select, input[type=text], input[type=number]{ background:var(--card); border:1px solid var(--line); color:var(--text); padding:8px 10px; border-radius:6px; font-family:var(--mono); font-size:13px; }
+  select:focus, input:focus{ outline:1px solid var(--amber); }
+  button.action{ background:var(--card); border:1px solid var(--line); color:var(--text); padding:8px 14px; border-radius:6px; font-family:var(--mono); font-size:12px; cursor:pointer; letter-spacing:0.5px; }
+  button.action:hover{ border-color:var(--amber); color:var(--amber); }
+  button.action:disabled{ opacity:0.4; cursor:default; }
+  button.primary{ background:var(--amber-dim); border-color:var(--amber); color:var(--amber); }
+  button.iconbtn{ padding:8px 10px; }
+  label.chk{ font-family:var(--mono); font-size:11px; color:var(--muted); display:flex; align-items:center; gap:6px; cursor:pointer; }
+  .status-bar{ width:100%; margin-top:4px; display:flex; gap:16px; flex-wrap:wrap; font-family:var(--mono); font-size:11px; color:var(--muted); }
+  .status-bar b{ color:var(--text); }
+  .status-bar .seg{ padding:2px 8px; border-radius:4px; border:1px solid var(--line); }
+
+  #drawerOverlay{ display:none; position:fixed; inset:0; background:rgba(0,0,0,0.5); z-index:199; }
+  #drawerOverlay.open{ display:block; }
+  #drawer{
+    position:fixed; top:0; bottom:0; left:0; width:300px; max-width:85vw; z-index:200;
+    background:var(--panel) center/cover no-repeat; border-right:1px solid var(--line);
+    transform:translateX(-100%); transition:transform 0.25s ease; overflow-y:auto;
+  }
+  #drawer.open{ transform:translateX(0); }
+  #drawer.has-bg .drawer-section{ background:rgba(0,0,0,0.55); border-radius:8px; margin:10px; padding:12px; }
+  body.light #drawer.has-bg .drawer-section{ background:rgba(255,255,255,0.8); }
+  #drawer:not(.has-bg) .drawer-section{ padding:14px 16px; border-bottom:1px solid var(--line); }
+  .drawer-header{ display:flex; align-items:center; justify-content:space-between; padding:14px 16px; border-bottom:1px solid var(--line); }
+  .drawer-header h2{ font-family:var(--mono); font-size:13px; color:var(--amber); margin:0; letter-spacing:0.5px; text-transform:uppercase; }
+  #closeDrawerBtn{ background:none; border:none; color:var(--muted); font-size:18px; cursor:pointer; }
+  .drawer-section h4{ color:var(--text); font-size:12px; margin:0 0 8px 0; font-family:var(--mono); text-transform:uppercase; letter-spacing:0.5px; }
+  .drawer-section p{ margin:4px 0; font-size:12.5px; color:var(--muted); line-height:1.5; }
+  .drawer-section .privacy{ border-left:3px solid var(--teal); padding-left:10px; color:var(--text); }
+  .drawer-row{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+  .profile-avatar{ width:56px; height:56px; border-radius:50%; background:var(--card); border:1px solid var(--line); display:flex; align-items:center; justify-content:center; font-size:22px; color:var(--muted); overflow:hidden; flex-shrink:0; }
+  .profile-avatar img{ width:100%; height:100%; object-fit:cover; }
+  .profile-head{ display:flex; gap:12px; align-items:center; }
+  .profile-name-input{ width:100%; margin-top:8px; }
+  .profile-title{ font-family:var(--mono); font-size:11px; color:var(--amber); margin-top:4px; }
+  .xp-bar-track{ background:var(--card); border:1px solid var(--line); border-radius:6px; height:10px; margin-top:8px; overflow:hidden; }
+  .xp-bar-fill{ background:var(--amber); height:100%; width:0%; }
+  .xp-label{ font-family:var(--mono); font-size:10px; color:var(--muted); margin-top:4px; }
+  .achv-list{ display:flex; flex-direction:column; gap:8px; margin-top:8px; }
+  .achv-item{ display:flex; gap:10px; align-items:center; background:var(--card); border:1px solid var(--line); border-radius:6px; padding:8px 10px; opacity:0.5; }
+  .achv-item .achv-icon{ font-size:18px; }
+  .achv-item .achv-text{ font-size:11.5px; }
+  .achv-item .achv-text b{ display:block; color:var(--text); font-size:12px; }
+  main{ padding:20px; max-width:1400px; margin:0 auto; }
+  .loading{ font-family:var(--mono); color:var(--amber); font-size:13px; padding:20px; text-align:center; }
+  .empty{ font-family:var(--mono); color:var(--muted); font-size:13px; padding:40px; text-align:center; }
+  .posterProgress{ font-family:var(--mono); font-size:11px; color:var(--teal); text-align:center; padding:6px 0 14px 0; }
+  .grid{ display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:16px; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:8px; overflow:hidden; display:flex; flex-direction:column; transition:border-color 0.15s, box-shadow 0.15s; }
+  .card.tagged{ border-color:var(--amber); }
+  .card.hovered{ box-shadow:0 0 0 2px var(--amber) inset; }
+  .card.hidden-tagged{ display:none; }
+  .card.nomal{ opacity:0.55; }
+  .card-top{ display:flex; gap:10px; padding:10px; }
+  .card-top .thumbwrap{ width:64px; height:90px; flex-shrink:0; border-radius:4px; overflow:hidden; background:linear-gradient(100deg, var(--line) 30%, var(--card) 50%, var(--line) 70%); background-size:200% 100%; animation:shimmer 1.2s infinite; }
+  .card-top .thumbwrap.loaded{ animation:none; background:none; }
+  .card-top img{ width:64px; height:90px; object-fit:cover; display:block; opacity:0; transition:opacity 0.25s; }
+  .card-top img.loaded{ opacity:1; }
+  @keyframes shimmer{ 0%{background-position:200% 0;} 100%{background-position:-200% 0;} }
+  .card-info{ min-width:0; }
+  .card-info .title{ font-size:13px; line-height:1.3; margin:0 0 6px 0; font-weight:600; }
+  .card-info .meta{ font-family:var(--mono); font-size:10px; color:var(--teal); }
+  .card-info .type{ font-family:var(--mono); font-size:10px; color:var(--muted); margin-top:2px; }
+  .card-info .kbd{ font-family:var(--mono); font-size:9px; color:var(--muted); margin-top:4px; }
+  .card-info .nomaltag{ font-family:var(--mono); font-size:9px; color:var(--red); margin-top:4px; }
+  .seg-row{ display:grid; grid-template-columns:repeat(3, 1fr); border-top:1px solid var(--line); }
+  .seg-row button{ background:none; border:none; border-right:1px solid var(--line); border-top:1px solid var(--line); color:var(--muted); font-family:var(--mono); font-size:9.5px; padding:6px 2px; cursor:pointer; letter-spacing:0.3px; }
+  .seg-row button:nth-child(3n){ border-right:none; }
+  .seg-row button:nth-child(-n+3){ border-top:none; }
+  .seg-row button.sel-none.active{ background:#2b323d; color:var(--text); }
+  .seg-row button.sel-watching.active{ background:#2e4a7a; color:#8fc1ff; }
+  .seg-row button.sel-completed.active{ background:#2e6b4f; color:#7de3ab; }
+  .seg-row button.sel-onhold.active{ background:#7a662e; color:var(--amber); }
+  .seg-row button.sel-dropped.active{ background:#7a2e2e; color:var(--red); }
+  .seg-row button.sel-ptw.active{ background:#4a2e7a; color:#c39bff; }
+  .seg-row button:hover:not(.active){ color:var(--text); }
+  .seg-row button:disabled{ opacity:0.3; cursor:default; }
+  .score-row{ display:flex; align-items:center; gap:6px; padding:6px 10px; border-top:1px solid var(--line); font-family:var(--mono); font-size:10px; color:var(--muted); }
+  .score-row input{ width:48px; padding:4px 6px; font-size:11px; }
+  .pager{ display:flex; justify-content:center; gap:10px; margin:20px 0; }
+  footer{ text-align:center; padding:20px; font-family:var(--mono); font-size:11px; color:var(--muted); }
+  #toast{ position:fixed; bottom:20px; left:50%; transform:translateX(-50%) translateY(20px); background:var(--panel); border:1px solid var(--amber); color:var(--text); padding:10px 16px; border-radius:8px; font-family:var(--mono); font-size:12px; display:flex; gap:12px; align-items:center; opacity:0; pointer-events:none; transition:opacity 0.2s, transform 0.2s; z-index:100; }
+  #toast.show{ opacity:1; transform:translateX(-50%) translateY(0); pointer-events:auto; }
+  #toast button{ background:none; border:none; color:var(--amber); font-family:var(--mono); cursor:pointer; font-size:12px; text-decoration:underline; }
+</style>
+</head>
+<body>
+<div id="errBanner"></div>
+<header id="mainHeader">
+  <button id="menuBtn" title="Menu">☰</button>
+  <div class="brand">
+    <div class="dot"></div><h1>MAL Picker</h1>
+  </div>
+</header>
+
+<div class="filterBar">
+  <div class="tabs">
+    <button id="tabSeason" class="active" data-i18n="tabSeason">Browse by season</button>
+    <button id="tabSearch" data-i18n="tabSearch">Search by title</button>
+  </div>
+  <div id="seasonControls">
+    <button class="action iconbtn" id="prevSeasonBtn" data-i18n-title="prevSeasonTitle" title="Previous season">◀</button>
+    <select id="yearSel"></select>
+    <select id="seasonSel">
+      <option value="WINTER" data-i18n="seasonWinter">Winter</option>
+      <option value="SPRING" data-i18n="seasonSpring">Spring</option>
+      <option value="SUMMER" data-i18n="seasonSummer">Summer</option>
+      <option value="FALL" data-i18n="seasonFall">Fall</option>
+    </select>
+    <button class="action iconbtn" id="nextSeasonBtn" data-i18n-title="nextSeasonTitle" title="Next season">▶</button>
+    <button class="action primary" id="loadSeasonBtn" data-i18n="load">Load</button>
+  </div>
+  <div id="searchControls" style="display:none;">
+    <input type="text" id="searchInput" data-i18n-placeholder="searchPlaceholder" placeholder="anime title..." style="width:240px;">
+    <button class="action primary" id="searchBtn" data-i18n="search">Search</button>
+  </div>
+  <label class="chk"><input type="checkbox" id="hideTaggedChk"> <span data-i18n="hideTagged">hide tagged</span></label>
+  <div class="status-bar" id="statusBar"></div>
+</div>
+
+<div id="drawerOverlay"></div>
+<div id="drawer">
+  <div class="drawer-header">
+    <h2 data-i18n="menuTitle">Menu</h2>
+    <button id="closeDrawerBtn">✕</button>
+  </div>
+
+  <div class="drawer-section" id="profileSection">
+    <h4 data-i18n="profileHeading">Profile</h4>
+    <div class="profile-head">
+      <div class="profile-avatar" id="profileAvatar">🙂</div>
+      <div style="flex:1;">
+        <input type="text" class="profile-name-input" id="profileNameInput" data-i18n-placeholder="profileNamePlaceholder" placeholder="Your name...">
+        <div class="profile-title" id="profileTitleDisplay" data-i18n="noTitleYet">No title yet</div>
+      </div>
+    </div>
+    <input type="file" id="profilePicInput" accept="image/*" style="display:none;">
+    <div class="drawer-row">
+      <button class="action" id="changeProfilePicBtn" data-i18n="changePicture">Change picture</button>
+    </div>
+    <div class="xp-bar-track"><div class="xp-bar-fill" id="xpBarFill"></div></div>
+    <div class="xp-label" id="xpLabel">XP 0</div>
+  </div>
+
+  <div class="drawer-section" id="achievementsSection">
+    <h4 data-i18n="achievementsHeading">Achievements</h4>
+    <p data-i18n="achievementsComingSoon">Coming soon — this'll fill in as you tag anime.</p>
+    <div class="achv-list" id="achvList"></div>
+  </div>
+
+  <div class="drawer-section">
+    <h4 data-i18n="settingsHeading">Settings</h4>
+    <div class="drawer-row">
+      <button class="action iconbtn" id="langBtn" data-i18n-title="langToggleTitle" title="Change language">🌐 EN</button>
+      <button class="action iconbtn" id="themeBtn" data-i18n-title="themeToggleTitle" title="Toggle theme">☾/☀</button>
+    </div>
+  </div>
+
+  <div class="drawer-section">
+    <h4 data-i18n="dataHeading">Your data</h4>
+    <div class="drawer-row">
+      <button class="action" id="exportBackupBtn" data-i18n="backupFile">💾 Backup file</button>
+      <button class="action" id="importBackupBtn" data-i18n="importBackup">📂 Import backup</button>
+    </div>
+    <input type="file" id="importBackupInput" accept="application/json" style="display:none;">
+    <div class="drawer-row">
+      <button class="action" id="exportBtn" data-i18n="exportXml">⤓ Export MAL XML</button>
+      <button class="action" id="clearBtn" data-i18n="clearAll">Clear all tags</button>
+    </div>
+  </div>
+
+  <div class="drawer-section">
+    <h4 data-i18n="basicsHeading">Basics</h4>
+    <p data-i18n="basicsP1">Browse by season/year, or search a title. Click a status button on a card to tag it (or hover a card and press <b>1–6</b>). Hit <b>Export MAL XML</b> — this downloads a file. Go to <b>myanimelist.net/import.php</b>, choose import type "MyAnimeList Import", and upload it.</p>
+    <p data-i18n="basicsP2">Scoring is optional — leave it at 0 if you don't care, or set 1–10 and it carries into the import.</p>
+    <p data-i18n="basicsP3">Entries with no MAL match (rare — mostly obscure/regional titles AniList knows but MAL doesn't) are shown dimmed and can't be tagged, since there'd be nothing to export them as.</p>
+  </div>
+
+  <div class="drawer-section">
+    <h4 class="privacy" data-i18n="privacyHeading">Privacy — read this</h4>
+    <p class="privacy" data-i18n="privacyPMobile">This app runs entirely on your phone. Your tagged statuses are saved to a private file inside the app's own storage — nothing is sent to us, to each other, or anywhere else. The only network calls this makes are to AniList (to fetch anime info to show you) and, only when <i>you</i> choose to export and share it, to MyAnimeList.</p>
+  </div>
+
+  <div class="drawer-section">
+    <h4 data-i18n="drawerBgHeading">Customize this menu's background</h4>
+    <p data-i18n="drawerBgP">Upload an image below to use as this menu's background. Recommended resolution: roughly <b>600×1200px</b> (tall, narrow) since it fills this side panel.</p>
+    <input type="file" id="bannerInput" accept="image/*">
+    <div class="drawer-row">
+      <button class="action" id="removeBannerBtn" data-i18n="removeBanner">Remove background</button>
+    </div>
+  </div>
+</div>
+
+<main>
+  <div id="content"><div class="empty" data-i18n="emptyStart">Pick a year + season, or search a title, to start tagging.</div></div>
+  <div class="pager" id="pager" style="display:none;">
+    <button class="action" id="prevBtn" data-i18n="prevPage">← Prev page</button>
+    <span id="pageLabel" style="font-family:var(--mono); font-size:12px; color:var(--muted); align-self:center;"></span>
+    <button class="action" id="nextBtn" data-i18n="nextPage">Next page →</button>
+  </div>
+</main>
+<footer data-i18n="footerMobile">Data via AniList. Progress saved privately on this device.</footer>
+<div id="toast"><span id="toastMsg"></span><button id="toastUndo" data-i18n="undo">Undo</button></div>
+
+<script src="capacitor.js"></script>
+<script>
+const STR = {
+  subtitle: {en:'tag → export → upload to myanimelist.net/import.php', es:'etiqueta → exporta → sube a myanimelist.net/import.php'},
+  langToggleTitle: {en:'Change language', es:'Cambiar idioma'},
+  themeToggleTitle: {en:'Toggle theme', es:'Cambiar tema'},
+  tabSeason: {en:'Browse by season', es:'Explorar por temporada'},
+  tabSearch: {en:'Search by title', es:'Buscar por título'},
+  prevSeasonTitle: {en:'Previous season', es:'Temporada anterior'},
+  nextSeasonTitle: {en:'Next season', es:'Siguiente temporada'},
+  seasonWinter: {en:'Winter', es:'Invierno'},
+  seasonSpring: {en:'Spring', es:'Primavera'},
+  seasonSummer: {en:'Summer', es:'Verano'},
+  seasonFall: {en:'Fall', es:'Otoño'},
+  load: {en:'Load', es:'Cargar'},
+  search: {en:'Search', es:'Buscar'},
+  searchPlaceholder: {en:'anime title...', es:'nombre del anime...'},
+  hideTagged: {en:'hide tagged', es:'ocultar ya etiquetados'},
+  backupFile: {en:'💾 Backup file', es:'💾 Respaldar archivo'},
+  importBackup: {en:'📂 Import backup', es:'📂 Importar respaldo'},
+  exportXml: {en:'⤓ Export MAL XML', es:'⤓ Exportar XML de MAL'},
+  clearAll: {en:'Clear all tags', es:'Borrar todas las etiquetas'},
+  instructionsSummary: {en:'▸ How this works / read before sharing with friends', es:'▸ Cómo funciona / lee esto antes de compartirlo con tus amigos'},
+  basicsHeading: {en:'Basics', es:'Lo básico'},
+  basicsP1: {en:'Browse by season/year, or search a title. Click a status button on a card to tag it (or hover a card and press <b>1–6</b>). Hit <b>Export MAL XML</b> — this downloads a file. Go to <b>myanimelist.net/import.php</b>, choose import type "MyAnimeList Import", and upload it.', es:'Explora por temporada/año, o busca un título. Haz clic en un botón de estado dentro de una tarjeta para etiquetarla (o pasa el mouse sobre la tarjeta y presiona <b>1–6</b>). Presiona <b>Exportar XML de MAL</b> — esto descarga un archivo. Entra a <b>myanimelist.net/import.php</b>, elige el tipo de importación "MyAnimeList Import" y súbelo.'},
+  basicsP2: {en:"Scoring is optional — leave it at 0 if you don't care, or set 1–10 and it carries into the import.", es:'Ponerle puntaje es opcional — déjalo en 0 si no te interesa, o pon un número del 1 al 10 y se incluye en la importación.'},
+  basicsP3: {en:"Entries with no MAL match (rare — mostly obscure/regional titles AniList knows but MAL doesn't) are shown dimmed and can't be tagged, since there'd be nothing to export them as.", es:'Los títulos sin equivalente en MAL (algo raro — casi siempre títulos muy poco conocidos o regionales que AniList sí tiene pero MAL no) aparecen apagados y no se pueden etiquetar, porque no habría nada que exportar.'},
+  privacyHeading: {en:'Privacy — read this', es:'Privacidad — lee esto'},
+  privacyP: {en:"This is a program that runs entirely on your own computer. Your tagged statuses are saved to a plain file (<code>mal_picker_progress.json</code>) sitting right next to this program — nothing is sent to us, to each other, or anywhere else. The only network calls this makes are to AniList (to fetch anime info to show you) and, only when <i>you</i> choose to export and upload it, to MyAnimeList. You can open that JSON file in a text editor any time to see exactly what's stored — there's nothing hidden in it.", es:'Este es un programa que corre completamente en tu propia computadora. Todo lo que etiquetas se guarda en un archivo de texto plano (<code>mal_picker_progress.json</code>) que está justo al lado del programa — nada se envía a nosotros, entre ustedes, ni a ningún otro lado. Las únicas conexiones a internet que hace son hacia AniList (para traer la información de los animes que ves) y, solo si <i>tú</i> decides exportar y subirlo, hacia MyAnimeList. Puedes abrir ese archivo JSON con cualquier editor de texto cuando quieras y ver exactamente qué se guardó — no hay nada escondido.'},
+  bannerHeading: {en:'Customize the top banner', es:'Personaliza el banner de arriba'},
+  bannerP: {en:'Yes, you can put your waifu up there. Upload an image below. Recommended resolution: roughly <b>1600×220px</b> (wide, short) since it stretches across the header.', es:'Sí, puedes poner a tu waifu ahí arriba. Sube una imagen abajo. Resolución recomendada: más o menos <b>1600×220px</b> (ancha y bajita), ya que se estira a lo largo de todo el encabezado.'},
+  removeBanner: {en:'Remove background', es:'Quitar fondo'},
+  menuTitle: {en:'Menu', es:'Menú'},
+  profileHeading: {en:'Profile', es:'Perfil'},
+  profileNamePlaceholder: {en:'Your name...', es:'Tu nombre...'},
+  noTitleYet: {en:'No title yet', es:'Todavía sin título'},
+  changePicture: {en:'Change picture', es:'Cambiar foto'},
+  achievementsHeading: {en:'Achievements', es:'Logros'},
+  achievementsComingSoon: {en:"Coming soon — this'll fill in as you tag anime.", es:'Próximamente — esto se va a ir llenando a medida que etiquetes anime.'},
+  settingsHeading: {en:'Settings', es:'Ajustes'},
+  dataHeading: {en:'Your data', es:'Tus datos'},
+  drawerBgHeading: {en:"Customize this menu's background", es:'Personaliza el fondo de este menú'},
+  drawerBgP: {en:'Upload an image below to use as this menu\'s background. Recommended resolution: roughly <b>600×1200px</b> (tall, narrow) since it fills this side panel.', es:'Sube una imagen abajo para usarla como fondo de este menú. Resolución recomendada: más o menos <b>600×1200px</b> (angosta y alta), ya que llena este panel lateral.'},
+  privacyPMobile: {en:"This app runs entirely on your phone. Your tagged statuses are saved to a private file inside the app's own storage — nothing is sent to us, to each other, or anywhere else. The only network calls this makes are to AniList (to fetch anime info to show you) and, only when <i>you</i> choose to export and share it, to MyAnimeList.", es:'Esta app corre completamente en tu teléfono. Todo lo que etiquetas se guarda en un archivo privado dentro del almacenamiento propio de la app — nada se envía a nosotros, entre ustedes, ni a ningún otro lado. Las únicas conexiones a internet que hace son hacia AniList (para traer la información de los animes que ves) y, solo si <i>tú</i> decides exportar y compartirlo, hacia MyAnimeList.'},
+  footerMobile: {en:'Data via AniList. Progress saved privately on this device.', es:'Datos vía AniList. El progreso se guarda de forma privada en este dispositivo.'},
+  progressSaveFailed: {en:"Couldn't save your progress just now — try tagging it again in a moment.", es:'No se pudo guardar tu progreso justo ahora — intenta etiquetarlo de nuevo en un momento.'},
+  achvLocked: {en:'Locked', es:'Bloqueado'},
+  emptyStart: {en:'Pick a year + season, or search a title, to start tagging.', es:'Elige un año y temporada, o busca un título, para empezar a etiquetar.'},
+  prevPage: {en:'← Prev page', es:'← Página anterior'},
+  nextPage: {en:'Next page →', es:'Página siguiente →'},
+  footer: {en:'Data via AniList. Progress saved locally next to this program.', es:'Datos vía AniList. El progreso se guarda localmente junto a este programa.'},
+  undo: {en:'Undo', es:'Deshacer'},
+  kbdHint: {en:'hover + press 1-6 to tag', es:'pasa el mouse y presiona 1-6 para etiquetar'},
+  nomalTag: {en:"not linked to MAL — can't export", es:'no está vinculado a MAL — no se puede exportar'},
+  scoreLabel: {en:'score:', es:'puntaje:'},
+  noResults: {en:'No results.', es:'No hay resultados.'},
+  loadingSeason: {en:'Loading {season} {year} — page {page}...', es:'Cargando {season} {year} — página {page}...'},
+  searchingFor: {en:'Searching "{q}" — page {page}...', es:'Buscando "{q}" — página {page}...'},
+  posterProgress: {en:'Loading posters: {loaded} / {total}', es:'Cargando pósters: {loaded} / {total}'},
+  serverUnreachable: {en:'Could not reach the local server. Is the app still running?', es:'No se pudo conectar con el servidor local. ¿Sigue corriendo la aplicación?'},
+  serverUnreachableSave: {en:'Could not reach the local server to save progress. Is the app still running?', es:'No se pudo conectar con el servidor local para guardar el progreso. ¿Sigue corriendo la aplicación?'},
+  serverUnreachableStart: {en:'Could not reach the local server. Make sure the app is still running, then reload this page.', es:'No se pudo conectar con el servidor local. Asegúrate de que la aplicación siga corriendo y recarga esta página.'},
+  confirmClear: {en:'Clear all tagged statuses? This cannot be undone.', es:'¿Borrar todas las etiquetas? Esto no se puede deshacer.'},
+  nothingTagged: {en:'Nothing tagged yet.', es:'Todavía no has etiquetado nada.'},
+  noAnimeTagged: {en:'No anime tagged yet — pick some statuses first.', es:'Todavía no etiquetaste ningún anime — elige algunos estados primero.'},
+  noTaggedInFile: {en:'That file has no tagged anime in it.', es:'Ese archivo no tiene ningún anime etiquetado.'},
+  couldNotReadFile: {en:'Could not read that file.', es:'No se pudo leer ese archivo.'},
+  progressLoaded: {en:'Progress loaded.', es:'Progreso cargado.'},
+  loadedMergeConfirm: {en:'Loaded {n} tagged anime.\n\nOK = merge into current progress\nCancel = replace current progress entirely', es:'Se cargaron {n} animes etiquetados.\n\nAceptar = combinar con tu progreso actual\nCancelar = reemplazar todo tu progreso actual'},
+  dupWarningExport: {en:'Heads up: these titles look tagged under more than one entry:\n{titles}\n\nExport anyway?', es:'Ojo: estos títulos parecen estar etiquetados en más de una entrada:\n{titles}\n\n¿Exportar de todas formas?'},
+  duplicateWarning: {en:'Possible duplicate titles tagged under different entries: {titles}', es:'Posibles títulos duplicados etiquetados en entradas distintas: {titles}'},
+  taggedAs: {en:'tagged as {status}', es:'etiquetado como {status}'},
+  cleared: {en:'cleared', es:'sin etiqueta'},
+  statusTotal: {en:'{n} tagged total', es:'{n} etiquetados en total'},
+  pageLabel: {en:'page {n}', es:'página {n}'},
+  shareFailed: {en:'Could not share the file: {msg}', es:'No se pudo compartir el archivo: {msg}'},
+};
+
+const STATUS_LABELS = {
+  none: {en:'None', es:'Ninguno'},
+  watching: {en:'Watch', es:'Viendo'},
+  completed: {en:'Done', es:'Listo'},
+  onhold: {en:'Hold', es:'Pausa'},
+  dropped: {en:'Drop', es:'Dejado'},
+  ptw: {en:'Plan', es:'Plan'},
+};
+const MAL_STATUS_LABEL_FULL = {
+  watching: {en:'Watching', es:'Viendo'},
+  completed: {en:'Completed', es:'Completado'},
+  onhold: {en:'On-Hold', es:'En pausa'},
+  dropped: {en:'Dropped', es:'Abandonado'},
+  ptw: {en:'Plan to Watch', es:'Planeo ver'},
+};
+
+let currentLang = 'en';
+function t(key, vars){
+  let s = (STR[key] && (STR[key][currentLang] || STR[key].en)) || key;
+  if(vars) Object.keys(vars).forEach(k=> s = s.split('{'+k+'}').join(vars[k]));
+  return s;
+}
+function statusLabel(key){ return (STATUS_LABELS[key] && (STATUS_LABELS[key][currentLang] || STATUS_LABELS[key].en)) || key; }
+function malStatusFull(key){ return (MAL_STATUS_LABEL_FULL[key] && (MAL_STATUS_LABEL_FULL[key][currentLang] || MAL_STATUS_LABEL_FULL[key].en)) || key; }
+
+function applyI18n(){
+  document.querySelectorAll('[data-i18n]').forEach(el=>{
+    el.innerHTML = t(el.getAttribute('data-i18n'));
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el=>{
+    el.setAttribute('placeholder', t(el.getAttribute('data-i18n-placeholder')));
+  });
+  document.querySelectorAll('[data-i18n-title]').forEach(el=>{
+    el.setAttribute('title', t(el.getAttribute('data-i18n-title')));
+  });
+  document.getElementById('langBtn').textContent = currentLang === 'es' ? '🌐 ES' : '🌐 EN';
+  renderStatusBar();
+  renderProfileUI();
+  if(lastResults.length) renderResults(lastResults);
+}
+document.getElementById('langBtn').onclick = ()=>{
+  currentLang = currentLang === 'en' ? 'es' : 'en';
+  applyI18n();
+  saveProgress();
+};
+
+const STATUSES = [
+  {key:'none', cls:'sel-none'},
+  {key:'watching', cls:'sel-watching'},
+  {key:'completed', cls:'sel-completed'},
+  {key:'onhold', cls:'sel-onhold'},
+  {key:'dropped', cls:'sel-dropped'},
+  {key:'ptw', cls:'sel-ptw'},
+];
+const SEASON_ORDER = ['WINTER','SPRING','SUMMER','FALL'];
+
+let selections = {};
+let currentMode = 'season';
+let currentPage = 1;
+let hasNextPage = false;
+let lastResults = [];
+let hoveredCardId = null;
+let lastToastUndo = null;
+let hideTagged = false;
+
+const contentEl = document.getElementById('content');
+const statusBarEl = document.getElementById('statusBar');
+const pagerEl = document.getElementById('pager');
+const pageLabelEl = document.getElementById('pageLabel');
+const errBanner = document.getElementById('errBanner');
+const headerEl = document.getElementById('mainHeader');
+const yearSel = document.getElementById('yearSel');
+
+function showErr(msg){
+  errBanner.textContent = '⚠ ' + msg;
+  errBanner.style.display = 'block';
+}
+function clearErr(){ errBanner.style.display = 'none'; }
+
+// ---- on-device progress persistence (Capacitor Filesystem) ----
+const { Filesystem, Directory, Encoding, Share } = Capacitor.Plugins;
+const PROGRESS_FILENAME = 'mal_picker_progress.json';
+
+async function shareTextFile(filename, content){
+  try{
+    await Filesystem.writeFile({
+      path: filename,
+      directory: Directory.Cache,
+      data: content,
+      encoding: Encoding.UTF8,
+    });
+    const uriResult = await Filesystem.getUri({ path: filename, directory: Directory.Cache });
+    await Share.share({ title: filename, dialogTitle: filename, files: [uriResult.uri] });
+  }catch(e){
+    alert(t('shareFailed', {msg: (e && e.message) || e}));
+  }
+}
+
+let saveTimer = null;
+function saveProgress(){
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(async ()=>{
+    try{
+      const payload = {
+        selections,
+        theme: document.body.classList.contains('light') ? 'light' : 'dark',
+        drawerBg: currentDrawerBg,
+        lastView: currentLastView(),
+        lang: currentLang,
+        profile: {
+          name: document.getElementById('profileNameInput').value || '',
+          pic: currentProfilePic,
+          xp: profileXp,
+          title: equippedTitle,
+          unlockedAchievements: unlockedAchievements,
+        },
+      };
+      await Filesystem.writeFile({
+        path: PROGRESS_FILENAME,
+        directory: Directory.Data,
+        data: JSON.stringify(payload),
+        encoding: Encoding.UTF8,
+      });
+      clearErr();
+      const dupes = findDuplicatesClient();
+      if(dupes.length){ showErr(t('duplicateWarning', {titles: dupes.join(', ')})); }
+    }catch(e){ showErr(t('progressSaveFailed')); }
+  }, 300);
+}
+function currentLastView(){
+  return { mode: currentMode, year: yearSel.value, season: document.getElementById('seasonSel').value, query: document.getElementById('searchInput').value };
+}
+let currentDrawerBg = '';
+let currentProfilePic = '';
+let profileXp = 0;
+let equippedTitle = '';
+let unlockedAchievements = [];
+
+async function loadAllProgress(){
+  try{
+    const result = await Filesystem.readFile({
+      path: PROGRESS_FILENAME,
+      directory: Directory.Data,
+      encoding: Encoding.UTF8,
+    });
+    const data = JSON.parse(result.data);
+    selections = data.selections || {};
+    if(data.theme === 'light') document.body.classList.add('light');
+    if(data.drawerBg){ currentDrawerBg = data.drawerBg; applyDrawerBg(data.drawerBg); }
+    if(data.lang === 'es' || data.lang === 'en') currentLang = data.lang;
+    if(data.profile){
+      document.getElementById('profileNameInput').value = data.profile.name || '';
+      currentProfilePic = data.profile.pic || '';
+      profileXp = data.profile.xp || 0;
+      equippedTitle = data.profile.title || '';
+      unlockedAchievements = data.profile.unlockedAchievements || [];
+      if(currentProfilePic) document.getElementById('profileAvatar').innerHTML = `<img src="${currentProfilePic}">`;
+    }
+    applyI18n();
+    renderProfileUI();
+    return data.lastView;
+  }catch(e){
+    // No progress file yet — totally normal on first launch.
+    applyI18n();
+    renderProfileUI();
+    return null;
+  }
+}
+
+// ---- theme ----
+document.getElementById('themeBtn').onclick = ()=>{
+  document.body.classList.toggle('light');
+  saveProgress();
+};
+
+// ---- side drawer ----
+const drawerEl = document.getElementById('drawer');
+const drawerOverlayEl = document.getElementById('drawerOverlay');
+function openDrawer(){ drawerEl.classList.add('open'); drawerOverlayEl.classList.add('open'); }
+function closeDrawer(){ drawerEl.classList.remove('open'); drawerOverlayEl.classList.remove('open'); }
+document.getElementById('menuBtn').onclick = openDrawer;
+document.getElementById('closeDrawerBtn').onclick = closeDrawer;
+drawerOverlayEl.onclick = closeDrawer;
+
+// ---- drawer background customization ----
+function applyDrawerBg(dataUrl){
+  drawerEl.style.backgroundImage = `url(${dataUrl})`;
+  drawerEl.classList.add('has-bg');
+}
+document.getElementById('bannerInput').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    currentDrawerBg = reader.result;
+    applyDrawerBg(currentDrawerBg);
+    saveProgress();
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('removeBannerBtn').onclick = ()=>{
+  currentDrawerBg = '';
+  drawerEl.style.backgroundImage = '';
+  drawerEl.classList.remove('has-bg');
+  saveProgress();
+};
+
+// ---- profile (placeholder — no XP/achievement logic wired up yet) ----
+document.getElementById('profileNameInput').addEventListener('change', saveProgress);
+document.getElementById('changeProfilePicBtn').onclick = ()=> document.getElementById('profilePicInput').click();
+document.getElementById('profilePicInput').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    currentProfilePic = reader.result;
+    document.getElementById('profileAvatar').innerHTML = `<img src="${currentProfilePic}">`;
+    saveProgress();
+  };
+  reader.readAsDataURL(file);
+});
+
+// Placeholder achievement definitions — not wired to real unlock logic yet.
+const ACHIEVEMENTS = [
+  {id:'first_anime', icon:'🎒', name:{en:'Start of the Weaboo Journey', es:'El inicio del viaje weaboo'}, desc:{en:'Tag your first anime', es:'Etiqueta tu primer anime'}},
+  {id:'ten_tagged', icon:'📺', name:{en:'Getting Serious', es:'Ya nos pusimos serios'}, desc:{en:'Tag 10 anime', es:'Etiqueta 10 animes'}},
+  {id:'hundred_tagged', icon:'🏆', name:{en:'Otaku Certified', es:'Otaku certificado'}, desc:{en:'Tag 100 anime', es:'Etiqueta 100 animes'}},
+];
+
+function renderProfileUI(){
+  document.getElementById('profileTitleDisplay').textContent = equippedTitle || t('noTitleYet');
+  document.getElementById('xpBarFill').style.width = Math.min(profileXp, 100) + '%';
+  document.getElementById('xpLabel').textContent = 'XP ' + profileXp;
+  const list = document.getElementById('achvList');
+  list.innerHTML = ACHIEVEMENTS.map(a=>{
+    const unlocked = unlockedAchievements.includes(a.id);
+    const name = a.name[currentLang] || a.name.en;
+    const desc = a.desc[currentLang] || a.desc.en;
+    return `<div class="achv-item">
+      <div class="achv-icon">${unlocked ? a.icon : '🔒'}</div>
+      <div class="achv-text"><b>${escapeHtml(name)}</b>${escapeHtml(desc)}</div>
+    </div>`;
+  }).join('');
+}
+
+// ---- year select ----
+const nowYear = new Date().getFullYear();
+for(let y = nowYear; y >= 1960; y--){
+  const opt = document.createElement('option');
+  opt.value = y; opt.textContent = y;
+  if(y === nowYear) opt.selected = true;
+  yearSel.appendChild(opt);
+}
+
+// ---- tabs ----
+const tabSeason = document.getElementById('tabSeason');
+const tabSearch = document.getElementById('tabSearch');
+const seasonControls = document.getElementById('seasonControls');
+const searchControls = document.getElementById('searchControls');
+tabSeason.onclick = ()=>{ currentMode='season'; tabSeason.classList.add('active'); tabSearch.classList.remove('active'); seasonControls.style.display=''; searchControls.style.display='none'; };
+tabSearch.onclick = ()=>{ currentMode='search'; tabSearch.classList.add('active'); tabSeason.classList.remove('active'); seasonControls.style.display='none'; searchControls.style.display=''; };
+
+document.getElementById('prevSeasonBtn').onclick = ()=> shiftSeason(-1);
+document.getElementById('nextSeasonBtn').onclick = ()=> shiftSeason(1);
+function shiftSeason(dir){
+  const seasonSelEl = document.getElementById('seasonSel');
+  let idx = SEASON_ORDER.indexOf(seasonSelEl.value);
+  let year = parseInt(yearSel.value, 10);
+  idx += dir;
+  if(idx < 0){ idx = 3; year -= 1; }
+  if(idx > 3){ idx = 0; year += 1; }
+  seasonSelEl.value = SEASON_ORDER[idx];
+  if([...yearSel.options].some(o => parseInt(o.value,10) === year)) yearSel.value = year;
+  loadSeason(1);
+}
+
+function escapeHtml(str){
+  return String(str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+
+function cardHTML(anime){
+  const id = anime.idMal;
+  const hasMal = !!id;
+  const key = hasMal ? id : ('nomal-' + anime.id);
+  const sel = hasMal ? selections[id] : null;
+  const curStatus = sel ? sel.status : 'none';
+  const curScore = sel && sel.score ? sel.score : 0;
+  const tagged = curStatus !== 'none';
+
+  let segButtons = STATUSES.map(s => {
+    const active = s.key === curStatus ? 'active' : '';
+    const disabled = hasMal ? '' : 'disabled';
+    return `<button class="${s.cls} ${active}" data-id="${key}" data-status="${s.key}" ${disabled}>${statusLabel(s.key)}</button>`;
+  }).join('');
+
+  return `<div class="card ${tagged?'tagged':''} ${hideTagged && tagged ? 'hidden-tagged':''} ${hasMal?'':'nomal'}" id="card-${key}" data-id="${key}" data-malid="${hasMal?id:''}">
+    <div class="card-top">
+      <div class="thumbwrap"><img src="${anime.cover}" alt="" loading="lazy"></div>
+      <div class="card-info">
+        <p class="title">${escapeHtml(anime.title)}</p>
+        <div class="meta">${escapeHtml(anime.date)}</div>
+        <div class="type">${escapeHtml(anime.format)}${anime.episodes ? ' · ' + anime.episodes + ' ep' : ''}</div>
+        ${hasMal ? '<div class="kbd">' + t('kbdHint') + '</div>' : '<div class="nomaltag">' + t('nomalTag') + '</div>'}
+      </div>
+    </div>
+    <div class="seg-row">${segButtons}</div>
+    <div class="score-row">${t('scoreLabel')} <input type="number" min="0" max="10" step="1" value="${curScore}" data-id="${key}" class="scoreInput" ${hasMal?'':'disabled'}></div>
+  </div>`;
+}
+
+function renderResults(results){
+  lastResults = results;
+  if(!results.length){ contentEl.innerHTML = '<div class="empty">' + t('noResults') + '</div>'; return; }
+  contentEl.innerHTML = `<div class="posterProgress" id="posterProgress">${t('posterProgress',{loaded:0,total:results.length})}</div><div class="grid">${results.map(cardHTML).join('')}</div>`;
+
+  let loadedCount = 0;
+  const progressEl = document.getElementById('posterProgress');
+  contentEl.querySelectorAll('.card-top img').forEach(img=>{
+    const finish = ()=>{
+      loadedCount++;
+      img.classList.add('loaded');
+      img.closest('.thumbwrap').classList.add('loaded');
+      if(progressEl){
+        progressEl.textContent = t('posterProgress',{loaded:loadedCount,total:results.length});
+        if(loadedCount >= results.length) setTimeout(()=>{ if(progressEl) progressEl.style.display='none'; }, 400);
+      }
+    };
+    if(img.complete) finish();
+    else{ img.addEventListener('load', finish); img.addEventListener('error', finish); }
+  });
+
+  contentEl.querySelectorAll('.seg-row button:not(:disabled)').forEach(btn=> btn.addEventListener('click', onStatusClick));
+  contentEl.querySelectorAll('.scoreInput:not(:disabled)').forEach(inp=> inp.addEventListener('change', onScoreChange));
+  contentEl.querySelectorAll('.card').forEach(card=>{
+    card.addEventListener('mouseenter', ()=>{ hoveredCardId = card.dataset.malid || null; card.classList.add('hovered'); });
+    card.addEventListener('mouseleave', ()=>{ if(hoveredCardId === card.dataset.malid) hoveredCardId = null; card.classList.remove('hovered'); });
+  });
+}
+
+function findAnimeByKey(key){
+  return lastResults.find(a => a.idMal && String(a.idMal) === String(key));
+}
+
+function applyStatus(id, status, showToastMsg){
+  const anime = findAnimeByKey(id);
+  if(!anime) return;
+  const prevSel = selections[id] ? {...selections[id]} : null;
+
+  if(status === 'none') delete selections[id];
+  else selections[id] = { status, title: anime.title, type: anime.format, episodes: anime.episodes || 0, score: prevSel ? (prevSel.score||0) : 0 };
+
+  saveProgress();
+
+  const card = document.getElementById('card-' + id);
+  if(card){
+    const tagged = status !== 'none';
+    card.classList.toggle('tagged', tagged);
+    card.classList.toggle('hidden-tagged', hideTagged && tagged);
+    card.querySelectorAll('.seg-row button').forEach(b=> b.classList.toggle('active', b.dataset.status === status));
+  }
+  renderStatusBar();
+
+  if(showToastMsg){
+    const label = status === 'none' ? t('cleared') : t('taggedAs', {status: malStatusFull(status)});
+    showToast(`"${anime.title}" ${label}`, ()=> applyStatus(id, prevSel ? prevSel.status : 'none', false));
+  }
+}
+
+function onStatusClick(e){ applyStatus(e.currentTarget.dataset.id, e.currentTarget.dataset.status, true); }
+
+function onScoreChange(e){
+  const id = e.currentTarget.dataset.id;
+  let val = parseInt(e.currentTarget.value, 10);
+  if(isNaN(val) || val < 0) val = 0;
+  if(val > 10) val = 10;
+  e.currentTarget.value = val;
+  if(selections[id]){ selections[id].score = val; saveProgress(); }
+  else if(val > 0){ applyStatus(id, 'ptw', false); selections[id].score = val; saveProgress(); }
+}
+
+document.addEventListener('keydown', (e)=>{
+  if(!hoveredCardId) return;
+  const num = parseInt(e.key, 10);
+  if(num >= 1 && num <= 6) applyStatus(hoveredCardId, STATUSES[num-1].key, true);
+});
+
+let toastTimer = null;
+function showToast(msg, undoFn){
+  const toast = document.getElementById('toast');
+  document.getElementById('toastMsg').textContent = msg;
+  lastToastUndo = undoFn;
+  toast.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=> toast.classList.remove('show'), 4000);
+}
+document.getElementById('toastUndo').onclick = ()=>{
+  if(lastToastUndo) lastToastUndo();
+  document.getElementById('toast').classList.remove('show');
+};
+
+document.getElementById('hideTaggedChk').addEventListener('change', (e)=>{
+  hideTagged = e.target.checked;
+  document.querySelectorAll('.card.tagged').forEach(c=> c.classList.toggle('hidden-tagged', hideTagged));
+});
+
+function renderStatusBar(){
+  const counts = {none:0, watching:0, completed:0, onhold:0, dropped:0, ptw:0};
+  Object.values(selections).forEach(s => { counts[s.status] = (counts[s.status]||0) + 1; });
+  const total = Object.keys(selections).length;
+  statusBarEl.innerHTML = `<span class="seg"><b>${t('statusTotal',{n:total})}</b></span>` +
+    STATUSES.filter(s=>s.key!=='none').map(s=>`<span class="seg">${statusLabel(s.key)}: <b>${counts[s.key]}</b></span>`).join('');
+}
+
+// ---- AniList GraphQL client (talks to AniList directly — no local backend on mobile) ----
+const ANILIST_URL = 'https://graphql.anilist.co';
+const SEASON_QUERY = `
+query ($season: MediaSeason, $seasonYear: Int, $page: Int) {
+  Page(page: $page, perPage: 24) {
+    pageInfo { hasNextPage currentPage }
+    media(season: $season, seasonYear: $seasonYear, type: ANIME, sort: POPULARITY_DESC) {
+      id idMal
+      title { romaji english }
+      coverImage { medium large }
+      startDate { year month day }
+      format episodes
+    }
+  }
+}`;
+const SEARCH_QUERY = `
+query ($search: String, $page: Int) {
+  Page(page: $page, perPage: 24) {
+    pageInfo { hasNextPage currentPage }
+    media(search: $search, type: ANIME, sort: SEARCH_MATCH) {
+      id idMal
+      title { romaji english }
+      coverImage { medium large }
+      startDate { year month day }
+      format episodes
+    }
+  }
+}`;
+
+async function anilistFetch(query, variables){
+  let res;
+  try{
+    res = await fetch(ANILIST_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+      body: JSON.stringify({ query, variables }),
+    });
+  }catch(e){
+    throw new Error(t('serverUnreachable'));
+  }
+  if(res.status === 429){
+    await new Promise(r=>setTimeout(r, 1500));
+    return anilistFetch(query, variables);
+  }
+  const body = await res.json();
+  if(body.errors && body.errors.length){
+    throw new Error(body.errors[0].message || 'AniList error');
+  }
+  const page = body.data.Page;
+  const items = (page.media || []).map(m=>{
+    const title = (m.title && (m.title.english || m.title.romaji)) || 'Untitled';
+    const cover = (m.coverImage && (m.coverImage.large || m.coverImage.medium)) || '';
+    const sd = m.startDate || {};
+    const date = sd.year ? [sd.year, sd.month, sd.day].filter(Boolean).join('-') : 'unknown date';
+    return { id: m.id, idMal: m.idMal, title, cover, date, format: m.format || 'Unknown', episodes: m.episodes || 0 };
+  });
+  return { items, hasNextPage: !!(page.pageInfo && page.pageInfo.hasNextPage) };
+}
+
+async function loadSeason(page){
+  const year = yearSel.value;
+  const season = document.getElementById('seasonSel').value;
+  contentEl.innerHTML = '<div class="loading">' + t('loadingSeason', {season: t('season'+season.charAt(0)+season.slice(1).toLowerCase()), year, page}) + '</div>';
+  pagerEl.style.display = 'none';
+  try{
+    const data = await anilistFetch(SEASON_QUERY, {season, seasonYear: parseInt(year,10), page});
+    hasNextPage = data.hasNextPage; currentPage = page;
+    renderResults(data.items || []);
+    updatePager();
+    saveProgress();
+  }catch(e){ contentEl.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>'; }
+}
+
+async function doSearch(page){
+  const q = document.getElementById('searchInput').value.trim();
+  if(!q) return;
+  contentEl.innerHTML = '<div class="loading">' + t('searchingFor', {q: escapeHtml(q), page}) + '</div>';
+  pagerEl.style.display = 'none';
+  try{
+    const data = await anilistFetch(SEARCH_QUERY, {search: q, page});
+    hasNextPage = data.hasNextPage; currentPage = page;
+    renderResults(data.items || []);
+    updatePager();
+    saveProgress();
+  }catch(e){ contentEl.innerHTML = '<div class="empty">' + escapeHtml(e.message) + '</div>'; }
+}
+
+function updatePager(){
+  pagerEl.style.display = 'flex';
+  pageLabelEl.textContent = t('pageLabel', {n: currentPage});
+  document.getElementById('prevBtn').disabled = currentPage <= 1;
+  document.getElementById('nextBtn').disabled = !hasNextPage;
+}
+
+document.getElementById('loadSeasonBtn').onclick = ()=> loadSeason(1);
+document.getElementById('searchBtn').onclick = ()=> doSearch(1);
+document.getElementById('searchInput').addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(1); });
+document.getElementById('prevBtn').onclick = ()=>{ if(currentPage<=1) return; currentMode==='season' ? loadSeason(currentPage-1) : doSearch(currentPage-1); };
+document.getElementById('nextBtn').onclick = ()=>{ if(!hasNextPage) return; currentMode==='season' ? loadSeason(currentPage+1) : doSearch(currentPage+1); };
+
+document.getElementById('clearBtn').onclick = ()=>{
+  if(!confirm(t('confirmClear'))) return;
+  selections = {};
+  saveProgress();
+  renderStatusBar();
+  if(lastResults.length) renderResults(lastResults);
+};
+
+// backup export/import (on top of the automatic local file)
+document.getElementById('exportBackupBtn').onclick = async ()=>{
+  const total = Object.keys(selections).length;
+  if(!total){ alert(t('nothingTagged')); return; }
+  const payload = JSON.stringify({savedAt: new Date().toISOString(), selections}, null, 2);
+  await shareTextFile('mal_picker_backup.json', payload);
+};
+document.getElementById('importBackupBtn').onclick = ()=> document.getElementById('importBackupInput').click();
+document.getElementById('importBackupInput').addEventListener('change', (e)=>{
+  const file = e.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = ()=>{
+    try{
+      const parsed = JSON.parse(reader.result);
+      const incoming = parsed.selections || parsed;
+      const incomingCount = Object.keys(incoming).length;
+      if(!incomingCount){ alert(t('noTaggedInFile')); return; }
+      const merge = confirm(t('loadedMergeConfirm', {n:incomingCount}));
+      selections = merge ? {...selections, ...incoming} : incoming;
+      saveProgress();
+      renderStatusBar();
+      if(lastResults.length) renderResults(lastResults);
+      alert(t('progressLoaded'));
+    }catch(err){ alert(t('couldNotReadFile')); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+});
+
+// These are the literal tokens MyAnimeList's importer expects — never translate these,
+// regardless of UI language, or the import will fail.
+const MAL_STATUS_XML = { watching:'Watching', completed:'Completed', onhold:'On-Hold', dropped:'Dropped', ptw:'Plan to Watch' };
+
+function buildXML(){
+  const entries = Object.entries(selections);
+  let body = entries.map(([id, s])=>{
+    const statusText = MAL_STATUS_XML[s.status];
+    const watchedEps = s.status === 'completed' ? (s.episodes || 0) : 0;
+    const score = s.score || 0;
+    return `<anime>
+<series_animedb_id>${id}</series_animedb_id>
+<series_title><![CDATA[${s.title}]]></series_title>
+<series_type>${escapeHtml(s.type)}</series_type>
+<series_episodes>${s.episodes || 0}</series_episodes>
+<my_id>0</my_id>
+<my_watched_episodes>${watchedEps}</my_watched_episodes>
+<my_start_date>0000-00-00</my_start_date>
+<my_finish_date>0000-00-00</my_finish_date>
+<my_score>${score}</my_score>
+<my_status>${statusText}</my_status>
+<my_times_watched>0</my_times_watched>
+<my_rewatching>0</my_rewatching>
+<update_on_import>1</update_on_import>
+</anime>`;
+  }).join('\n');
+  return `<?xml version="1.0" encoding="UTF-8" ?>\n<myanimelist>\n<myinfo>\n<user_export_type>1</user_export_type>\n</myinfo>\n${body}\n</myanimelist>`;
+}
+
+document.getElementById('exportBtn').onclick = async ()=>{
+  const total = Object.keys(selections).length;
+  if(!total){ alert(t('noAnimeTagged')); return; }
+  const dupes = findDuplicatesClient();
+  if(dupes.length && !confirm(t('dupWarningExport', {titles: dupes.join(', ')}))) return;
+  const xml = buildXML();
+  await shareTextFile('mal_import.xml', xml);
+};
+function findDuplicatesClient(){
+  const seen = {}; const dupes = [];
+  Object.entries(selections).forEach(([id, s])=>{
+    const key = (s.title||'').trim().toLowerCase();
+    if(!key) return;
+    if(seen[key] && seen[key] !== id) dupes.push(s.title);
+    else seen[key] = id;
+  });
+  return [...new Set(dupes)];
+}
+
+(async function init(){
+  const lastView = await loadAllProgress();
+  if(lastView){
+    if(lastView.mode === 'search' && lastView.query){
+      tabSearch.click();
+      document.getElementById('searchInput').value = lastView.query;
+      doSearch(1);
+    } else if(lastView.year && lastView.season){
+      if([...yearSel.options].some(o=>o.value === String(lastView.year))) yearSel.value = lastView.year;
+      document.getElementById('seasonSel').value = lastView.season;
+      loadSeason(1);
+    }
+  }
+})();
+</script>
+</body>
+</html>
