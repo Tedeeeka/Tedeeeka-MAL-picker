@@ -1,7 +1,0 @@
-<?xml version='1.0' encoding='utf-8'?>
-<resources>
-    <string name="app_name">MAL Picker Helper</string>
-    <string name="title_activity_main">MAL Picker Helper</string>
-    <string name="package_name">com.malpicker.helper</string>
-    <string name="custom_url_scheme">com.malpicker.helper</string>
-</resources>
